@@ -74,7 +74,7 @@ function getUserThreads($id, $conn){
         }
         return $results;
     } else {
-        sendExeption();
+        return [];
     }
 }
 function getUser($id, $conn){
@@ -88,6 +88,26 @@ function getUser($id, $conn){
 
     if ($stmt->rowCount() > 0) {
         return $stmt->fetch(PDO::FETCH_ASSOC);
+
+    } else {
+        sendExeption();
+    }
+}
+function getUsers($conn){
+    $sql = "SELECT * FROM `users`";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+
+    if ($stmt->rowCount() > 0) {
+        $results = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            array_push($results, $row);
+        }
+        return $results;
 
     } else {
         sendExeption();
@@ -118,6 +138,31 @@ function getThreadImages($threadId, $conn){
     }
 };
 
+function checkUser($login, $password, $conn){
+    $sql = "
+    SELECT users.* 
+    FROM users
+    WHERE users.name = '${login}';
+    ";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+
+    if ($stmt->rowCount() > 0) {
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($result['password'] === $password) {
+            return $result;
+        }else{
+            return ['error'=> true];
+        }
+    } else {
+        return ['error'=> true];
+    }
+};
+
 if ($method === 'GET'){
     if ($parts[0] === 'threads'){
         getLastThreads($conn);
@@ -130,8 +175,22 @@ if ($method === 'GET'){
             echo json_encode($user);
         }
         else{
-
+            $users = getUsers($conn);
+            header('Content-Type: application/json');
+            echo json_encode($users);
         }
+    }
+}
+
+if($method === 'PATCH'){
+    if($parts[0] === 'users'){
+        $data = json_decode(file_get_contents('php://input'), true);
+        $user = checkUser($data['login'], $data['password'], $conn);
+        if (!isset($user['error'])){
+            $user['threads'] = getUserThreads($user['id'], $conn);
+        }
+        header('Content-Type: application/json');
+        echo json_encode($user);
 
     }
 }
