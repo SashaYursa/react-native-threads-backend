@@ -20,7 +20,7 @@ array_shift($parts);
 function sendExeption() {
     header('Content-Type: application/json');
     //http_response_code(400);
-    echo json_encode(['message'=>'no data']);
+    return ['message'=>'no data'];
 };
 
 function getLastThreads($conn){
@@ -48,16 +48,18 @@ function getLastThreads($conn){
         header('Content-Type: application/json');
         echo json_encode($results);
     } else {
-        sendExeption();
+        return sendExeption();
     }
 };
 function getUserThreads($id, $conn){
     $sql = "
-    SELECT threads.*, (
+    SELECT threads.*, users.name as author_name, users.image as author_image, (
     SELECT COUNT(*) 
     FROM likes 
     WHERE likes.thread_id = threads.id) AS likes_count
-    FROM threads WHERE threads.author_id = ${id}
+    FROM threads 
+    INNER JOIN users ON threads.author_id = users.id
+    WHERE threads.author_id = ${id}
     ";
     try {
         $stmt = $conn->prepare($sql);
@@ -77,8 +79,8 @@ function getUserThreads($id, $conn){
         return [];
     }
 }
-function getUser($id, $conn){
-    $sql = "SELECT * FROM `users` WHERE `users`.`id` = ${id}";
+function getUser($param, $value, $conn){
+    $sql = "SELECT * FROM `users` WHERE `users`.`${param}` = '${value}'";
     try {
         $stmt = $conn->prepare($sql);
         $stmt->execute();
@@ -90,7 +92,7 @@ function getUser($id, $conn){
         return $stmt->fetch(PDO::FETCH_ASSOC);
 
     } else {
-        sendExeption();
+        return sendExeption();
     }
 }
 function getUsers($conn){
@@ -110,7 +112,7 @@ function getUsers($conn){
         return $results;
 
     } else {
-        sendExeption();
+       return sendExeption();
     }
 }
 
@@ -156,12 +158,26 @@ function checkUser($login, $password, $conn){
         if ($result['password'] === $password) {
             return $result;
         }else{
-            return ['error'=> true];
+            return ['error'=> true, 'message' => 'login failed'];
         }
     } else {
-        return ['error'=> true];
+        return ['error'=> true, 'message' => 'login failed'];
     }
 };
+
+function insertUser($login, $password, $conn){
+    $sql = "INSERT INTO `users` (`id`, `name`, `description`, `password`, `image`) 
+            VALUES (NULL, :login, '', :password, NULL)";
+    try {
+
+        $sth = $conn->prepare($sql);
+        $sth->execute([":login" => $login, ":password" => $password]);
+        return $conn->lastInsertId();
+    }
+    catch (Exception $e){
+        return  false;
+    }
+}
 
 if ($method === 'GET'){
     if ($parts[0] === 'threads'){
@@ -169,10 +185,20 @@ if ($method === 'GET'){
     }
     if ($parts[0] === 'users'){
         if (isset($parts[1])) {
-            $user = getUser($parts[1], $conn);
-            $user['threads'] = getUserThreads($parts[1], $conn);
-            header('Content-Type: application/json');
-            echo json_encode($user);
+            if ($parts[1] === 'check') {
+                $user = getUser('name', $parts[2], $conn);
+                header('Content-Type: application/json');
+                if (isset($user['message'])){
+                    echo json_encode(true);
+                }
+                else echo json_encode(false);
+            }
+            else {
+                $user = getUser('id', $parts[1], $conn);
+                $user['threads'] = getUserThreads($parts[1], $conn);
+                header('Content-Type: application/json');
+                echo json_encode($user);
+            }
         }
         else{
             $users = getUsers($conn);
@@ -195,52 +221,20 @@ if($method === 'PATCH'){
     }
 }
 
+if ($method === 'POST'){
+    header('Content-Type: application/json');
+    if ($parts[0] === 'users'){
+        $data = json_decode(file_get_contents('php://input'), true);
+        $login = $data['login'];
+        $password = $data['password'];
+        $userId = insertUser($login, $password, $conn);
+        if ($userId !== false){
+            $user = getUser('id', $userId, $conn);
+            echo json_encode($user);
+        }else{
+            echo json_encode(['error'=> 'registration failed']);
+        }
 
-
-//// Определите ресурс и идентификатор (если есть)
-//$resource = $parts[0];
-//$id = isset($parts[1]) ? $parts[1] : null;
-//
-//// Создайте массив для ответа
-//$response = array();
-//
-//// Обработка запроса
-//if ($method === 'GET') {
-//    if ($resource === 'users') {
-//        // Вернуть список пользователей или одного пользователя по идентификатору
-//        if ($id) {
-//            // Запрос на одного пользователя
-//            $user = getUserById($id); // Функция, которая получает данные пользователя
-//            if ($user) {
-//                $response['data'] = $user;
-//            } else {
-//                $response['error'] = 'Пользователь не найден';
-//            }
-//        } else {
-//            // Запрос на список пользователей
-//            $users = getAllUsers(); // Функция, которая получает список пользователей
-//            $response['data'] = $users;
-//        }
-//    } else {
-//        $response['error'] = 'Недопустимый ресурс';
-//    }
-//} else {
-//    $response['error'] = 'Недопустимый HTTP метод';
-//}
-//
-//// Отправьте ответ в формате JSON
-
-//
-//// Функция для получения данных пользователя
-//function getUserById($id) {
-//    // Здесь можно выполнить SQL-запрос или другой способ получения данных пользователя
-//    return array(/* данные пользователя */);
-//}
-//
-//// Функция для получения списка пользователей
-//function getAllUsers() {
-//    // Здесь можно выполнить SQL-запрос или другой способ получения списка пользователей
-//    return array(/* список пользователей */);
-//}
-
+    }
+}
 ?>
