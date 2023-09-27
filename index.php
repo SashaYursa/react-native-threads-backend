@@ -169,13 +169,39 @@ function insertUser($login, $password, $conn){
     $sql = "INSERT INTO `users` (`id`, `name`, `description`, `password`, `image`) 
             VALUES (NULL, :login, '', :password, NULL)";
     try {
-
         $sth = $conn->prepare($sql);
         $sth->execute([":login" => $login, ":password" => $password]);
         return $conn->lastInsertId();
     }
     catch (Exception $e){
         return  false;
+    }
+}
+
+function updateFieldById($table, $param, $value, $id, $conn){
+    $sql = "UPDATE `${table}` SET `${param}` = :value WHERE `${table}`.`id` = $id";
+    try {
+        $sth = $conn->prepare($sql);
+        $sth->execute([":value" => $value]);
+        return true;
+    }
+    catch (Exception $e){
+        return  false;
+    }
+}
+function updateUser($name, $password, $isPrivate, $description, $id, $conn){
+    $sql = "UPDATE `users` SET `name` = :name, 
+                   `description` = :description, 
+                   `password` = :password, 
+                   is_private = $isPrivate
+               WHERE `users`.`id` = 1";
+    try {
+        $sth = $conn->prepare($sql);
+        $sth->execute([":name" => $name, ":password" => $password, ":description" =>$description]);
+        return true;
+    }
+    catch (Exception $e){
+        return  $e;
     }
 }
 
@@ -196,6 +222,7 @@ if ($method === 'GET'){
             else {
                 $user = getUser('id', $parts[1], $conn);
                 $user['threads'] = getUserThreads($parts[1], $conn);
+                $user['is_private'] = boolval($user['is_private']);
                 header('Content-Type: application/json');
                 echo json_encode($user);
             }
@@ -224,15 +251,44 @@ if($method === 'PATCH'){
 if ($method === 'POST'){
     header('Content-Type: application/json');
     if ($parts[0] === 'users'){
-        $data = json_decode(file_get_contents('php://input'), true);
-        $login = $data['login'];
-        $password = $data['password'];
-        $userId = insertUser($login, $password, $conn);
-        if ($userId !== false){
-            $user = getUser('id', $userId, $conn);
-            echo json_encode($user);
-        }else{
-            echo json_encode(['error'=> 'registration failed']);
+        if (isset($parts[1])){
+            $dir = 'assets/images/users';
+            $tmpName = $_FILES['file']['tmp_name'];
+            if (!is_dir($dir)) {
+                mkdir($dir);
+            }
+            if (move_uploaded_file($tmpName, $dir . '/' . $_FILES['file']['name'])) {
+                echo json_encode(['files' =>$_FILES['file']['tmp_name']]);
+            } else {
+                echo json_encode(['error' => 'Файл не збережено']);
+            }
+            $res = updateFieldById('users', 'image', $_FILES['file']['name'], $parts[1], $conn);
+            echo  json_encode($res);
+        }
+        else {
+            $data = json_decode(file_get_contents('php://input'), true);
+            $login = $data['login'];
+            $password = $data['password'];
+            $userId = insertUser($login, $password, $conn);
+            if ($userId !== false) {
+                $user = getUser('id', $userId, $conn);
+                echo json_encode($user);
+            } else {
+                echo json_encode(['error' => 'registration failed']);
+            }
+        }
+
+    }
+}
+if ($method === 'PUT'){
+    header('Content-Type: application/json');
+    if ($parts[0] === 'users'){
+        if (isset($parts[1])){
+            $data = json_decode(file_get_contents('php://input'), true);
+            $data['is_private'] = intval($data['is_private']);
+            $res = updateUser($data['name'], $data['password'], $data['is_private'], $data['description'], $parts[1], $conn);
+
+            echo json_encode($res);
         }
 
     }
