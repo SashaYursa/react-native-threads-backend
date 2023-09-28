@@ -17,6 +17,9 @@ $parts = explode('/', $request);
 array_shift($parts);
 array_shift($parts);
 
+$getParams = explode('?', array_pop($parts));
+array_push($parts, array_shift($getParams));
+
 function sendExeption() {
     header('Content-Type: application/json');
     //http_response_code(400);
@@ -95,8 +98,13 @@ function getUser($param, $value, $conn){
         return sendExeption();
     }
 }
-function getUsers($conn){
-    $sql = "SELECT * FROM `users`";
+function getUsers($userId, $conn){
+    $sql = "SELECT users.*, COUNT(subscribers.id) AS subscribers
+    FROM users 
+    LEFT JOIN subscribers ON users.id = subscribers.user_id
+    WHERE `users`.`id` != '$userId'
+    GROUP BY users.id
+    ORDER BY subscribers DESC LIMIT 10 OFFSET 0";
     try {
         $stmt = $conn->prepare($sql);
         $stmt->execute();
@@ -204,11 +212,50 @@ function updateUser($name, $password, $isPrivate, $description, $id, $conn){
         return  $e;
     }
 }
+function checkSubscribe($userId, $selectedUserId, $conn){
+    $sql = "SELECT * FROM subscribers WHERE subscribers.user_id = ${selectedUserId} AND subscribers.subscriber_id = $userId";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+
+    if ($stmt->rowCount() > 0) {
+        return  true;
+    } else {
+        return false;
+    }
+}
+function addSubscribe($userId, $selectedUserId, $conn){
+    $sql = "INSERT INTO `subscribers` (`id`, `user_id`, `subscriber_id`) VALUES (NULL, ${selectedUserId}, ${userId})";
+    try {
+        $sth = $conn->prepare($sql);
+        $sth->execute();
+        return true;
+    }
+    catch (Exception $e){
+        return  false;
+    }
+}
+function deleteSubscribe($userId, $selectedUserId, $conn){
+    $sql = "DELETE FROM subscribers WHERE `subscribers`.`user_id` = ${selectedUserId} AND `subscribers`.`subscriber_id` = ${userId}";
+    try {
+        $sth = $conn->prepare($sql);
+        $sth->execute();
+        return true;
+    }
+    catch (Exception $e){
+        return  false;
+    }
+}
 
 if ($method === 'GET'){
     if ($parts[0] === 'threads'){
         getLastThreads($conn);
     }
+    header('Content-Type: application/json');
+
     if ($parts[0] === 'users'){
         if (isset($parts[1])) {
             if ($parts[1] === 'check') {
@@ -228,9 +275,15 @@ if ($method === 'GET'){
             }
         }
         else{
-            $users = getUsers($conn);
+            if (isset($_GET['userId'])){
             header('Content-Type: application/json');
+            $users = getUsers($_GET['userId'], $conn);
+            foreach ($users as $key => $user){
+               $users[$key]['isSubscribed'] = checkSubscribe($_GET['userId'], $user['id'], $conn);
+            }
             echo json_encode($users);
+            }
+
         }
     }
 }
@@ -266,18 +319,32 @@ if ($method === 'POST'){
             echo  json_encode($res);
         }
         else {
-            $data = json_decode(file_get_contents('php://input'), true);
-            $login = $data['login'];
-            $password = $data['password'];
-            $userId = insertUser($login, $password, $conn);
-            if ($userId !== false) {
-                $user = getUser('id', $userId, $conn);
-                echo json_encode($user);
-            } else {
-                echo json_encode(['error' => 'registration failed']);
+            if (isset($_GET['userId'])){
+                $data = json_decode(file_get_contents('php://input'), true);
+                $res = [];
+                if (checkSubscribe($_GET['userId'], $data['subscribeTo'], $conn)){
+                    $remove = deleteSubscribe($_GET['userId'], $data['subscribeTo'], $conn);
+                    $res = ['status' => $remove];
+                }
+                else{
+                    $add = addSubscribe($_GET['userId'], $data['subscribeTo'], $conn);
+                    $res = ['status' => $add];
+                }
+                echo json_encode($res);
+            }
+            else{
+                $data = json_decode(file_get_contents('php://input'), true);
+                $login = $data['login'];
+                $password = $data['password'];
+                $userId = insertUser($login, $password, $conn);
+                if ($userId !== false) {
+                    $user = getUser('id', $userId, $conn);
+                    echo json_encode($user);
+                } else {
+                    echo json_encode(['error' => 'registration failed']);
+                }
             }
         }
-
     }
 }
 if ($method === 'PUT'){
