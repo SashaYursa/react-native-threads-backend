@@ -54,6 +54,50 @@ function getLastThreads($conn){
         return sendExeption();
     }
 };
+function getThread($threaId, $conn){
+    $sql = "SELECT *, (SELECT COUNT(*) 
+    FROM likes 
+    WHERE likes.thread_id = threads.id) AS likes_count
+    FROM `threads`
+    WHERE threads.id = '${threaId}'";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+
+    if ($stmt->rowCount() > 0) {
+        $res = $stmt->fetch(PDO::FETCH_ASSOC);
+        $res['images'] = getThreadImages($res['id'], $conn);
+        $res['comments'] = getAllComments($res['id'], $conn);
+        return $res;
+    } else {
+        return [];
+    }
+}
+function getAllComments($threadId, $conn){
+    $sql = "SELECT `comments`.*, `users`.`name` as user_name, `users`.`image` as user_image FROM `comments`
+            INNER JOIN `users` ON `users`.`id` = `comments`.`author_id`
+            WHERE `comments`.`thread_id` = '${threadId}'";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+
+    if ($stmt->rowCount() > 0) {
+        $results = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            array_push($results, $row);
+        }
+        return $results;
+    } else {
+        return [];
+    }
+
+}
 function getUserThreads($id, $conn){
     $sql = "
     SELECT threads.*, users.name as author_name, users.image as author_image, (
@@ -251,10 +295,17 @@ function deleteSubscribe($userId, $selectedUserId, $conn){
 }
 
 if ($method === 'GET'){
-    if ($parts[0] === 'threads'){
-        getLastThreads($conn);
-    }
     header('Content-Type: application/json');
+    if ($parts[0] === 'threads'){
+        if (isset($parts[1])){
+            $res = getThread($parts[1], $conn);
+            echo json_encode($res);
+        }
+        else{
+            getLastThreads($conn);
+        }
+    }
+
 
     if ($parts[0] === 'users'){
         if (isset($parts[1])) {
