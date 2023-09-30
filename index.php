@@ -46,6 +46,7 @@ function getLastThreads($conn){
         $results = [];
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $row['images'] = getThreadImages($row['id'], $conn);
+            $row['comments'] = getCommentsCount($row['id'], $conn);
             array_push($results, $row);
         }
         header('Content-Type: application/json');
@@ -71,6 +72,9 @@ function getThread($threaId, $conn){
         $res = $stmt->fetch(PDO::FETCH_ASSOC);
         $res['images'] = getThreadImages($res['id'], $conn);
         $res['comments'] = getAllComments($res['id'], $conn);
+        foreach($res['comments'] as $key => $comm){
+            $res['comments'][$key]['replies'] = getAllComentsReplies($comm['id'], $conn);
+        }
         return $res;
     } else {
         return [];
@@ -79,7 +83,105 @@ function getThread($threaId, $conn){
 function getAllComments($threadId, $conn){
     $sql = "SELECT `comments`.*, `users`.`name` as user_name, `users`.`image` as user_image FROM `comments`
             INNER JOIN `users` ON `users`.`id` = `comments`.`author_id`
-            WHERE `comments`.`thread_id` = '${threadId}'";
+            WHERE `comments`.`thread_id` = '${threadId}' 
+            AND `comments`.`reply_to` IS NULL";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+
+    if ($stmt->rowCount() > 0) {
+        $results = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $row['reply_info'] = getReplicesCount($row['id'], $conn);
+            $results[] = $row;
+        }
+        return $results;
+    } else {
+        return [];
+    }
+}
+function getReplicesCount($commentId, $conn){
+    $sql = "SELECT COUNT(*) as count_reply   FROM comments WHERE comments.reply_to = '${commentId}'";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+    if ($stmt->rowCount() > 0) {
+
+        $results = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $row['preview_images'] = getPreReplicesImages($commentId, $conn);
+            $results[] = $row;
+        }
+        return $results;
+    }
+    return 0;
+}
+function getCommentsCount($threadId, $conn){
+    $sql = "SELECT COUNT(*) as comments_count FROM comments WHERE comments.thread_id = '${threadId}'";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+    if ($stmt->rowCount() > 0) {
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $row['preview_images'] = getPreCommentsImages($threadId, $conn);
+            return $row;
+        }
+    }
+    return 0;
+}
+function getPreReplicesImages($commentId, $conn){
+    $sql = "SELECT DISTINCT users.image FROM comments 
+            INNER JOIN users ON users.id = comments.author_id
+            WHERE comments.reply_to = '${commentId}'
+            LIMIT 2";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+    if ($stmt->rowCount() > 0) {
+        $results = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            array_push($results, $row);
+        }
+        return $results;
+    }
+    return 0;
+}
+function getPreCommentsImages($threadId, $conn){
+    $sql = "SELECT DISTINCT users.image FROM comments 
+            INNER JOIN users ON users.id = comments.author_id
+            WHERE comments.thread_id = '${threadId}'
+            LIMIT 2";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+    if ($stmt->rowCount() > 0) {
+        $results = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            array_push($results, $row);
+        }
+        return $results;
+    }
+    return 0;
+}
+function getAllComentsReplies($commentId, $conn){
+    $sql = "SELECT `comments`.*, `users`.`name` as user_name, `users`.`image` as user_image FROM `comments`
+            INNER JOIN `users` ON `users`.`id` = `comments`.`author_id`
+            WHERE `comments`.`reply_to` = '$commentId'";
     try {
         $stmt = $conn->prepare($sql);
         $stmt->execute();
@@ -96,7 +198,6 @@ function getAllComments($threadId, $conn){
     } else {
         return [];
     }
-
 }
 function getUserThreads($id, $conn){
     $sql = "
@@ -303,6 +404,17 @@ if ($method === 'GET'){
         }
         else{
             getLastThreads($conn);
+        }
+    }
+    if($parts[0] === 'comments'){
+        if (isset($parts[1])){
+            if ($parts[1] === 'thread'){
+                if (isset($parts[2])){
+                    $comments = getAllComments($parts[2], $conn);
+                    header('Content-Type: application/json');
+                    echo json_encode($comments);
+                }
+            }
         }
     }
 
