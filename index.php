@@ -73,7 +73,7 @@ function getThread($threaId, $conn){
         $res['images'] = getThreadImages($res['id'], $conn);
         $res['comments'] = getAllComments($res['id'], $conn);
         foreach($res['comments'] as $key => $comm){
-            $res['comments'][$key]['replies'] = getAllComentsReplies($comm['id'], $conn);
+            $res['comments'][$key]['replies'] = getAllCommentReplies($comm['id'], $conn);
         }
         return $res;
     } else {
@@ -231,8 +231,10 @@ function getPreCommentsImages($threadId, $conn){
     }
     return 0;
 }
-function getAllComentsReplies($commentId, $conn){
-    $sql = "SELECT `comments`.*, `users`.`name` as user_name, `users`.`image` as user_image FROM `comments`
+function getAllCommentReplies($commentId, $conn){
+    $sql = "SELECT `comments`.*, `users`.`name` as user_name, `users`.`image` as user_image, (SELECT COUNT(*) 
+    FROM comments_likes 
+    WHERE comments_likes.comment_id = comments.id) AS likes_count FROM `comments`
             INNER JOIN `users` ON `users`.`id` = `comments`.`author_id`
             WHERE `comments`.`reply_to` = '$commentId'";
     try {
@@ -245,7 +247,8 @@ function getAllComentsReplies($commentId, $conn){
     if ($stmt->rowCount() > 0) {
         $results = [];
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            array_push($results, $row);
+            $row['reply_info'] = getReplicesCount($row['id'], $conn);
+            $results[] = $row;
         }
         return $results;
     } else {
@@ -459,6 +462,13 @@ if ($method === 'GET'){
                     $comments = getAllComments($parts[2], $conn);
                     header('Content-Type: application/json');
                     echo json_encode($comments);
+                }
+            }
+            if($parts[1] === 'replies'){
+                if (isset($parts[2])){
+                    $replies = getAllCommentReplies($parts[2], $conn);
+                    header('Content-Type: application/json');
+                    echo json_encode($replies);
                 }
             }
         }
