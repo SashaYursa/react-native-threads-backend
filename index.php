@@ -80,6 +80,36 @@ function getThread($threaId, $conn){
         return [];
     }
 }
+function getUserThreads($id, $conn){
+    $sql = "
+    SELECT threads.*, users.name as author_name, users.image as author_image, (
+    SELECT COUNT(*) 
+    FROM likes 
+    WHERE likes.thread_id = threads.id) AS likes_count
+    FROM threads
+    INNER JOIN users ON threads.author_id = users.id
+    WHERE threads.author_id = '${id}'
+    ";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+
+    if ($stmt->rowCount() > 0) {
+        $results = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $row['images'] = getThreadImages($row['id'], $conn);
+            $row['comments'] = getCommentsCount($row['id'], $conn);
+            array_push($results, $row);
+        }
+        header('Content-Type: application/json');
+        return $results;
+    } else {
+        return sendExeption();
+    }
+}
 function getAllComments($threadId, $conn){
     $sql = "SELECT `comments`.*, `users`.`name` as user_name, `users`.`image` as user_image, (SELECT COUNT(*) 
     FROM comments_likes 
@@ -222,34 +252,7 @@ function getAllComentsReplies($commentId, $conn){
         return [];
     }
 }
-function getUserThreads($id, $conn){
-    $sql = "
-    SELECT threads.*, users.name as author_name, users.image as author_image, (
-    SELECT COUNT(*) 
-    FROM likes 
-    WHERE likes.thread_id = threads.id) AS likes_count
-    FROM threads 
-    INNER JOIN users ON threads.author_id = users.id
-    WHERE threads.author_id = ${id}
-    ";
-    try {
-        $stmt = $conn->prepare($sql);
-        $stmt->execute();
-    } catch(PDOException $e) {
-        echo "Error: " . $e->getMessage();
-    }
 
-    if ($stmt->rowCount() > 0) {
-        $results = [];
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $row['images'] = getThreadImages($row['id'], $conn);
-            array_push($results, $row);
-        }
-        return $results;
-    } else {
-        return [];
-    }
-}
 function getUser($param, $value, $conn){
     $sql = "SELECT * FROM `users` WHERE `users`.`${param}` = '${value}'";
     try {
@@ -434,8 +437,16 @@ if ($method === 'GET'){
     header('Content-Type: application/json');
     if ($parts[0] === 'threads'){
         if (isset($parts[1])){
-            $res = getThread($parts[1], $conn);
-            echo json_encode($res);
+            if ($parts[1] === 'user'){
+                if (isset($parts[2])){
+                    $threads = getUserThreads($parts[2], $conn);
+                    echo json_encode($threads);
+                }
+            }
+            else {
+                $res = getThread($parts[1], $conn);
+                echo json_encode($res);
+            }
         }
         else{
             getLastThreads($conn);
@@ -466,7 +477,6 @@ if ($method === 'GET'){
             }
             else {
                 $user = getUser('id', $parts[1], $conn);
-                $user['threads'] = getUserThreads($parts[1], $conn);
                 $user['is_private'] = boolval($user['is_private']);
                 header('Content-Type: application/json');
                 echo json_encode($user);
@@ -490,9 +500,6 @@ if($method === 'PATCH'){
     if($parts[0] === 'users'){
         $data = json_decode(file_get_contents('php://input'), true);
         $user = checkUser($data['login'], $data['password'], $conn);
-        if (!isset($user['error'])){
-            $user['threads'] = getUserThreads($user['id'], $conn);
-        }
         header('Content-Type: application/json');
         echo json_encode($user);
 
