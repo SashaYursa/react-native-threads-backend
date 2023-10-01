@@ -81,7 +81,9 @@ function getThread($threaId, $conn){
     }
 }
 function getAllComments($threadId, $conn){
-    $sql = "SELECT `comments`.*, `users`.`name` as user_name, `users`.`image` as user_image FROM `comments`
+    $sql = "SELECT `comments`.*, `users`.`name` as user_name, `users`.`image` as user_image, (SELECT COUNT(*) 
+    FROM comments_likes 
+    WHERE comments_likes.comment_id = comments.id) AS likes_count FROM `comments`
             INNER JOIN `users` ON `users`.`id` = `comments`.`author_id`
             WHERE `comments`.`thread_id` = '${threadId}' 
             AND `comments`.`reply_to` IS NULL";
@@ -99,6 +101,27 @@ function getAllComments($threadId, $conn){
             $results[] = $row;
         }
         return $results;
+    } else {
+        return [];
+    }
+}
+function getSingleComment($commentId, $conn){
+    $sql = "SELECT `comments`.*, `users`.`name` as user_name, `users`.`image` as user_image, (SELECT COUNT(*) 
+    FROM comments_likes 
+    WHERE comments_likes.comment_id = comments.id) AS likes_count FROM `comments`
+            INNER JOIN `users` ON `users`.`id` = `comments`.`author_id`
+            WHERE `comments`.`id` = '${commentId}'";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+
+    if ($stmt->rowCount() > 0) {
+        $res = $stmt->fetch(PDO::FETCH_ASSOC);
+        $res['reply_info'] = getReplicesCount($res['id'], $conn);
+        return $res;
     } else {
         return [];
     }
@@ -394,6 +417,18 @@ function deleteSubscribe($userId, $selectedUserId, $conn){
         return  false;
     }
 }
+function insertCommentToThread($comment, $userId, $threadId, $conn){
+    $sql = "INSERT INTO `comments` (`id`, `thread_id`, `author_id`, `comment_data`, `created_at`, `reply_to`) 
+            VALUES (NULL, :thread_id, :author_id, :comment, current_timestamp(), NULL)";
+    try {
+        $sth = $conn->prepare($sql);
+        $sth->execute([":thread_id" => $threadId, ":author_id" => $userId, ":comment" => $comment]);
+        return $conn->lastInsertId();
+    }
+    catch (Exception $e){
+        return  false;
+    }
+}
 
 if ($method === 'GET'){
     header('Content-Type: application/json');
@@ -505,6 +540,18 @@ if ($method === 'POST'){
                     echo json_encode($user);
                 } else {
                     echo json_encode(['error' => 'registration failed']);
+                }
+            }
+        }
+    }
+    if ($parts[0] === 'comments'){
+        $data = json_decode(file_get_contents('php://input'), true);
+        if(isset($parts[1])){
+            if ($parts[1] === 'threads'){
+                if (isset($parts[2])){
+                    $commentId = insertCommentToThread($data['comment'], $data['authorId'], $data['threadId'], $conn);
+                    $comment = getSingleComment($commentId, $conn);
+                    echo json_encode($comment);
                 }
             }
         }
