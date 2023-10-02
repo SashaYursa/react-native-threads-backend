@@ -435,6 +435,18 @@ function insertCommentToThread($comment, $userId, $threadId, $conn){
         return  false;
     }
 }
+function insertCommentRelply($comment, $userId, $threadId, $commentId, $conn){
+    $sql = "INSERT INTO `comments` (`id`, `thread_id`, `author_id`, `comment_data`, `created_at`, `reply_to`) 
+            VALUES (NULL, :thread_id, :author_id, :comment, current_timestamp(), :comment_id)";
+    try {
+        $sth = $conn->prepare($sql);
+        $sth->execute([":thread_id" => $threadId, ":author_id" => $userId, ":comment" => $comment, ":comment_id" => $commentId]);
+        return $conn->lastInsertId();
+    }
+    catch (Exception $e){
+        return  false;
+    }
+}
 
 if ($method === 'GET'){
     header('Content-Type: application/json');
@@ -567,6 +579,13 @@ if ($method === 'POST'){
             if ($parts[1] === 'threads'){
                 if (isset($parts[2])){
                     $commentId = insertCommentToThread($data['comment'], $data['authorId'], $data['threadId'], $conn);
+                    $comment = getSingleComment($commentId, $conn);
+                    echo json_encode($comment);
+                }
+            }
+            if ($parts[1] === 'reply'){
+                if(isset($parts[2])){
+                    $commentId = insertCommentRelply($data['comment'], $data['authorId'], $data['threadId'], $data['reply'], $conn);
                     $comment = getSingleComment($commentId, $conn);
                     echo json_encode($comment);
                 }
