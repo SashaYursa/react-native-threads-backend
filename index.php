@@ -468,6 +468,17 @@ function insertCommentRelply($comment, $userId, $threadId, $commentId, $conn){
         return  false;
     }
 }
+function insertThread($authorId, $threadData, $conn){
+    $sql = "INSERT INTO `threads` (`id`, `author_id`, `data`, `created_at`) VALUES (NULL, :author_id, :data, current_timestamp())";
+    try {
+        $sth = $conn->prepare($sql);
+        $sth->execute([":author_id" => $authorId, ":data" => $threadData]);
+        return $conn->lastInsertId();
+    }
+    catch (Exception $e){
+        return  false;
+    }
+}
 function checkThreadLike($userId, $threadId, $conn){
     $sql = "SELECT * FROM `likes` WHERE likes.user_id = '${userId}' AND likes.thread_id = '${threadId}'";
     try {
@@ -488,6 +499,17 @@ function insertThreadLike($userId, $threadId, $conn){
     try {
         $sth = $conn->prepare($sql);
         $sth->execute([":threadId" => $threadId, ":userId" => $userId]);
+        return $conn->lastInsertId();
+    }
+    catch (Exception $e){
+        return  false;
+    }
+}
+function insertThreadImage($threadId, $imageName, $conn){
+    $sql = "INSERT INTO `threads_images` (`id`, `thread_id`, `image_name`) VALUES (NULL, :threadId, :imageName)";
+    try {
+        $sth = $conn->prepare($sql);
+        $sth->execute([":threadId" => $threadId, ":imageName" => $imageName]);
         return $conn->lastInsertId();
     }
     catch (Exception $e){
@@ -648,6 +670,32 @@ if ($method === 'POST'){
                     echo json_encode($comment);
                 }
             }
+        }
+    }
+    if ($parts[0] === 'threads'){
+        if (isset($parts[1])){
+            if ($parts[1] === 'images'){
+                if (isset($parts[2])){
+                    $dir = 'assets/images/threads';
+                    $tmpName = $_FILES['file']['tmp_name'];
+                    if (!is_dir($dir)) {
+                        mkdir($dir);
+                    }
+                    $temp = explode(".", $_FILES["file"]["name"]);
+                    $newfilename = round(microtime(true)) . '.' . end($temp);
+                    if (move_uploaded_file($tmpName, $dir . '/' . $newfilename)) {
+                    } else {
+                        echo json_encode(['error' => 'Файл не збережено']);
+                    }
+                    $res = insertThreadImage($parts[2], $newfilename, $conn);
+                    echo  json_encode( true);
+                }
+            }
+        }
+        else {
+            $data = json_decode(file_get_contents('php://input'), true);
+            $addedThread = insertThread($data['authorId'], $data['data'], $conn);
+            echo json_encode(['threadId' => $addedThread]);
         }
     }
 }
