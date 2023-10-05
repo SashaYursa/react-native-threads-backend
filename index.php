@@ -33,7 +33,9 @@ function getLastThreads($conn){
     FROM likes 
     WHERE likes.thread_id = threads.id) AS likes_count
     FROM threads
-    INNER JOIN users ON threads.author_id = users.id;
+    INNER JOIN users ON threads.author_id = users.id
+    ORDER BY threads.id DESC
+    LIMIT 40;
     ";
     try {
         $stmt = $conn->prepare($sql);
@@ -90,6 +92,8 @@ function getUserThreads($id, $conn){
     FROM threads
     INNER JOIN users ON threads.author_id = users.id
     WHERE threads.author_id = '${id}'
+    ORDER BY threads.id DESC
+    LIMIT 40
     ";
     try {
         $stmt = $conn->prepare($sql);
@@ -130,6 +134,7 @@ function getAllComments($threadId, $conn){
         $results = [];
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $row['reply_info'] = getReplicesCount($row['id'], $conn);
+            $row['likes'] = getCommentLikes($row['id'], $conn);
             $results[] = $row;
         }
         return $results;
@@ -153,6 +158,7 @@ function getSingleComment($commentId, $conn){
     if ($stmt->rowCount() > 0) {
         $res = $stmt->fetch(PDO::FETCH_ASSOC);
         $res['reply_info'] = getReplicesCount($res['id'], $conn);
+        $res['likes'] = getCommentLikes($res['id'], $conn);
         return $res;
     } else {
         return [];
@@ -250,6 +256,7 @@ function getAllCommentReplies($commentId, $conn){
         $results = [];
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $row['reply_info'] = getReplicesCount($row['id'], $conn);
+            $row['likes'] = getCommentLikes($row['id'], $conn);
             $results[] = $row;
         }
         return $results;
@@ -325,6 +332,25 @@ function getThreadImages($threadId, $conn){
 };
 function  getThreadLikes($threadId, $conn){
     $sql = "SELECT * FROM `likes` WHERE likes.thread_id = '${threadId}'";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+
+    if ($stmt->rowCount() > 0) {
+        $results = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            array_push($results, $row);
+        }
+        return $results;
+    } else {
+        return [];
+    }
+}
+function  getCommentLikes($commentId, $conn){
+    $sql = "SELECT * FROM `comments_likes` WHERE comments_likes.comment_id = '${commentId}'";
     try {
         $stmt = $conn->prepare($sql);
         $stmt->execute();
@@ -494,11 +520,26 @@ function checkThreadLike($userId, $threadId, $conn){
         return false;
     }
 }
-function insertThreadLike($userId, $threadId, $conn){
-    $sql = "INSERT INTO `likes` (`id`, `user_id`, `thread_id`) VALUES (NULL, :userId, :threadId)";
+function checkCommentLike($userId, $commentId, $conn){
+    $sql = "SELECT * FROM `comments_likes` WHERE comments_likes.user_id = '${userId}' AND comments_likes.comment_id = '${commentId}'";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+
+    if ($stmt->rowCount() > 0) {
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } else {
+        return false;
+    }
+}
+function insertLike($table, $param, $valueId, $userId, $conn){
+    $sql = "INSERT INTO `${table}` (`id`, `user_id`, `$param`) VALUES (NULL, :userId, :value)";
     try {
         $sth = $conn->prepare($sql);
-        $sth->execute([":threadId" => $threadId, ":userId" => $userId]);
+        $sth->execute([":value" => $valueId, ":userId" => $userId]);
         return $conn->lastInsertId();
     }
     catch (Exception $e){
@@ -516,8 +557,8 @@ function insertThreadImage($threadId, $imageName, $conn){
         return  false;
     }
 }
-function removeThreadLike($likeId, $conn){
-    $sql = "DELETE FROM likes WHERE `likes`.`id` = '${likeId}'";
+function removeLike($table, $likeId, $conn){
+    $sql = "DELETE FROM $table WHERE `${table}`.`id` = '${likeId}'";
     try {
         $sth = $conn->prepare($sql);
         $sth->execute();
@@ -717,11 +758,27 @@ if ($method === 'PUT'){
             $res = false;
             if(!$liked){
                 $res['status'] = 'added';
-                $res['data'] = insertThreadLike($data['userId'], $data['threadId'], $conn);
+                $res['data'] = insertLike('likes', 'thread_id', $data['threadId'],$data['userId'], $conn);
             }
             else{
                 $res['status'] = 'removed';
-                if(removeThreadLike($liked['id'], $conn)) {
+                if(removeLike('likes' ,$liked['id'], $conn)) {
+                    $res['data'] = $liked['id'];
+                }
+            }
+            echo json_encode($res);
+        }
+    }
+    if ($parts[0] === 'comments'){
+        if ($parts[1] === 'likes'){
+            $liked = checkCommentLike($data['userId'], $data['commentId'], $conn);
+            if(!$liked){
+                $res['status'] = 'added';
+                $res['data'] = insertLike('comments_likes', 'comment_id', $data['commentId'],$data['userId'], $conn);
+            }
+            else{
+                $res['status'] = 'removed';
+                if(removeLike('comments_likes' ,$liked['id'], $conn)) {
                     $res['data'] = $liked['id'];
                 }
             }
