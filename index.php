@@ -273,13 +273,8 @@ function getUser($param, $value, $conn){
     } catch(PDOException $e) {
         echo "Error: " . $e->getMessage();
     }
-
-    if ($stmt->rowCount() > 0) {
-        return $stmt->fetch(PDO::FETCH_ASSOC);
-
-    } else {
-        return sendExeption();
-    }
+    $res = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $res;
 }
 function getUsers($userId, $conn){
     $sql = "SELECT users.*, COUNT(subscribers.id) AS subscribers
@@ -423,7 +418,7 @@ function updateUser($name, $password, $isPrivate, $description, $id, $conn){
                    `description` = :description, 
                    `password` = :password, 
                    is_private = $isPrivate
-               WHERE `users`.`id` = 1";
+               WHERE `users`.`id` = '${id}'";
     try {
         $sth = $conn->prepare($sql);
         $sth->execute([":name" => $name, ":password" => $password, ":description" =>$description]);
@@ -610,20 +605,29 @@ if ($method === 'GET'){
 
     if ($parts[0] === 'users'){
         if (isset($parts[1])) {
-            if ($parts[1] === 'check') {
-                $user = getUser('name', $parts[2], $conn);
-                header('Content-Type: application/json');
-                if (isset($user['message'])){
-                    echo json_encode(true);
-                }
-                else echo json_encode(false);
-            }
-            else {
+            if (isset($_GET['userId']))
+            {
                 $user = getUser('id', $parts[1], $conn);
-                $user['is_private'] = boolval($user['is_private']);
+                $user['isSubscribed'] = checkSubscribe($_GET['userId'], $user['id'], $conn);
                 header('Content-Type: application/json');
                 echo json_encode($user);
             }
+            else{
+                if ($parts[1] === 'check') {
+                    $user = getUser('name', $parts[2], $conn);
+                    header('Content-Type: application/json');
+                    if (isset($user['message'])) {
+                        echo json_encode(true);
+                    } else echo json_encode(false);
+                }
+                else {
+                    $user = getUser('id', $parts[1], $conn);
+                    $user['is_private'] = boolval($user['is_private']);
+                    header('Content-Type: application/json');
+                    echo json_encode($user);
+                }
+            }
+
         }
         else{
             if (isset($_GET['userId'])){
@@ -634,7 +638,6 @@ if ($method === 'GET'){
             }
             echo json_encode($users);
             }
-
         }
     }
 }
@@ -672,11 +675,11 @@ if ($method === 'POST'){
                 $res = [];
                 if (checkSubscribe($_GET['userId'], $data['subscribeTo'], $conn)){
                     $remove = deleteSubscribe($_GET['userId'], $data['subscribeTo'], $conn);
-                    $res = ['status' => $remove];
+                    $res = ['status' => $remove, 'type' => 'unsubscribe'];
                 }
                 else{
                     $add = addSubscribe($_GET['userId'], $data['subscribeTo'], $conn);
-                    $res = ['status' => $add];
+                    $res = ['status' => $add, 'type' => 'subscribe'];
                 }
                 echo json_encode($res);
             }
