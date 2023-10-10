@@ -12,7 +12,11 @@ $method = $_SERVER['REQUEST_METHOD'];
 
 // Получите запрошенный URL
 $request = $_SERVER['REQUEST_URI'];
-
+$headers = getallheaders();
+$userId = null;
+if (isset($headers['authorization'])){
+    $userId = $headers['authorization'];
+}
 $parts = explode('/', $request);
 array_shift($parts);
 array_shift($parts);
@@ -26,9 +30,9 @@ function sendExeption() {
     return ['message'=>'no data'];
 };
 
-function getLastThreads($conn){
+function getLastThreads($userId, $conn){
     $sql = "
-    SELECT threads.*, users.name as author_name, users.image as author_image, (
+    SELECT threads.*, users.name as author_name, users.image as author_image, users.id as author_id, (
     SELECT COUNT(*) 
     FROM likes 
     WHERE likes.thread_id = threads.id) AS likes_count
@@ -50,6 +54,7 @@ function getLastThreads($conn){
             $row['images'] = getThreadImages($row['id'], $conn);
             $row['comments'] = getCommentsCount($row['id'], $conn);
             $row['likes'] = getThreadLikes($row['id'], $conn);
+            $row['isSubscribed'] = checkSubscribe($userId, $row['author_id'], $conn);
             array_push($results, $row);
         }
         header('Content-Type: application/json');
@@ -83,7 +88,7 @@ function getThread($threaId, $conn){
         return [];
     }
 }
-function getUserThreads($id, $conn){
+function getUserThreads($userId, $id, $conn){
     $sql = "
     SELECT threads.*, users.name as author_name, users.image as author_image, (
     SELECT COUNT(*) 
@@ -108,6 +113,7 @@ function getUserThreads($id, $conn){
             $row['images'] = getThreadImages($row['id'], $conn);
             $row['comments'] = getCommentsCount($row['id'], $conn);
             $row['likes'] = getThreadLikes($row['id'], $conn);
+            $row['isSubscribed'] = checkSubscribe($userId, $id, $conn);
             array_push($results, $row);
         }
         header('Content-Type: application/json');
@@ -429,6 +435,9 @@ function updateUser($name, $password, $isPrivate, $description, $id, $conn){
     }
 }
 function checkSubscribe($userId, $selectedUserId, $conn){
+    if (intval($userId) === intval($selectedUserId)){
+        return  true;
+    }
     $sql = "SELECT * FROM subscribers WHERE subscribers.user_id = ${selectedUserId} AND subscribers.subscriber_id = $userId";
     try {
         $stmt = $conn->prepare($sql);
@@ -570,7 +579,7 @@ if ($method === 'GET'){
         if (isset($parts[1])){
             if ($parts[1] === 'user'){
                 if (isset($parts[2])){
-                    $threads = getUserThreads($parts[2], $conn);
+                    $threads = getUserThreads($userId, $parts[2], $conn);
                     echo json_encode($threads);
                 }
             }
@@ -580,7 +589,7 @@ if ($method === 'GET'){
             }
         }
         else{
-            getLastThreads($conn);
+            getLastThreads($userId, $conn);
         }
     }
     if($parts[0] === 'comments'){
@@ -630,14 +639,12 @@ if ($method === 'GET'){
 
         }
         else{
-            if (isset($_GET['userId'])){
             header('Content-Type: application/json');
-            $users = getUsers($_GET['userId'], $conn);
+            $users = getUsers($userId, $conn);
             foreach ($users as $key => $user){
-               $users[$key]['isSubscribed'] = checkSubscribe($_GET['userId'], $user['id'], $conn);
+               $users[$key]['isSubscribed'] = checkSubscribe($userId, $user['id'], $conn);
             }
             echo json_encode($users);
-            }
         }
     }
 }
@@ -669,33 +676,29 @@ if ($method === 'POST'){
             $res = updateFieldById('users', 'image', $_FILES['file']['name'], $parts[1], $conn);
             echo  json_encode($res);
         }
-        else {
-            if (isset($_GET['userId'])){
-                $data = json_decode(file_get_contents('php://input'), true);
-                $res = [];
-                if (checkSubscribe($_GET['userId'], $data['subscribeTo'], $conn)){
-                    $remove = deleteSubscribe($_GET['userId'], $data['subscribeTo'], $conn);
-                    $res = ['status' => $remove, 'type' => 'unsubscribe'];
-                }
-                else{
-                    $add = addSubscribe($_GET['userId'], $data['subscribeTo'], $conn);
-                    $res = ['status' => $add, 'type' => 'subscribe'];
-                }
-                echo json_encode($res);
-            }
-            else{
-                $data = json_decode(file_get_contents('php://input'), true);
-                $login = $data['login'];
-                $password = $data['password'];
-                $userId = insertUser($login, $password, $conn);
-                if ($userId !== false) {
-                    $user = getUser('id', $userId, $conn);
-                    echo json_encode($user);
-                } else {
-                    echo json_encode(['error' => 'registration failed']);
-                }
+        else{
+            $data = json_decode(file_get_contents('php://input'), true);
+            $login = $data['login'];
+            $password = $data['password'];
+            $userId = insertUser($login, $password, $conn);
+            if ($userId !== false) {
+                $user = getUser('id', $userId, $conn);
+                echo json_encode($user);
+            } else {
+                echo json_encode(['error' => 'registration failed']);
             }
         }
+    }
+    if ($parts[0] === 'subscribe'){
+        $res = [];
+        if (checkSubscribe($userId, $parts[1], $conn)) {
+            $remove = deleteSubscribe($userId, $parts[1], $conn);
+            $res = ['status' => $remove, 'type' => 'unsubscribe'];
+        } else {
+            $add = addSubscribe($userId, $parts[1], $conn);
+            $res = ['status' => $add, 'type' => 'subscribe'];
+        }
+        echo json_encode($res);
     }
     if ($parts[0] === 'comments'){
         $data = json_decode(file_get_contents('php://input'), true);
@@ -726,7 +729,7 @@ if ($method === 'POST'){
                         mkdir($dir);
                     }
                     $temp = explode(".", $_FILES["file"]["name"]);
-                    $newfilename = round(microtime(true)) . '.' . end($temp);
+                    $newfilename = round(microtime(true)) . rand(1000, 100000) . '.' . end($temp);
                     if (move_uploaded_file($tmpName, $dir . '/' . $newfilename)) {
                     } else {
                         echo json_encode(['error' => 'Файл не збережено']);
