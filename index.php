@@ -282,6 +282,17 @@ function getUser($param, $value, $conn){
     $res = $stmt->fetch(PDO::FETCH_ASSOC);
     return $res;
 }
+function getLike($likeId, $conn){
+    $sql = "SELECT * FROM `likes` WHERE `likes`.`id` = '${likeId}'";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        echo "Error: " . $e->getMessage();
+    }
+    $res = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $res;
+}
 function getUsers($userId, $conn){
     $sql = "SELECT users.*, COUNT(subscribers.id) AS subscribers
     FROM users 
@@ -396,8 +407,8 @@ function checkUser($login, $password, $conn){
 };
 
 function insertUser($login, $password, $conn){
-    $sql = "INSERT INTO `users` (`id`, `name`, `description`, `password`, `image`) 
-            VALUES (NULL, :login, '', :password, NULL)";
+    $sql = "INSERT INTO `users` (`id`, `name`, `description`, `password`, `image`, `isLogined`) 
+            VALUES (NULL, :login, '', :password, NULL, 1)";
     try {
         $sth = $conn->prepare($sql);
         $sth->execute([":login" => $login, ":password" => $password]);
@@ -573,6 +584,46 @@ function removeLike($table, $likeId, $conn){
     }
 }
 
+function sendNotification($title, $message, $subId){
+    $url = "https://app.nativenotify.com/api/indie/notification";
+
+    $curl = curl_init($url);
+    curl_setopt($curl, CURLOPT_URL, $url);
+    curl_setopt($curl, CURLOPT_POST, true);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+
+    $headers = array(
+        "Content-Type: application/json",
+    );
+    curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
+
+    $data = <<<DATA
+                {
+                  "subID": "${subId}",
+                  "appId": "13309",
+                  "appToken": "9Sr3Pqbh3qfiyZsUNbVSTt",
+                  "title": "${title}",
+                  "message": "${message}"
+                }
+DATA;
+
+    curl_setopt($curl, CURLOPT_POSTFIELDS, $data);
+    $res = curl_exec($curl);
+    curl_close($curl);
+    return json_decode($res);
+}
+function setUserLogined($isLogined, $userId, $conn){
+    $sql = "UPDATE `users` SET `isLogined` = '${isLogined}' WHERE `users`.`id` = ${userId}";
+    try {
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+        return true;
+    } catch(PDOException $e) {
+        return false;
+    }
+}
+
+
 if ($method === 'GET'){
     header('Content-Type: application/json');
     if ($parts[0] === 'threads'){
@@ -625,9 +676,9 @@ if ($method === 'GET'){
                 if ($parts[1] === 'check') {
                     $user = getUser('name', $parts[2], $conn);
                     header('Content-Type: application/json');
-                    if (isset($user['message'])) {
-                        echo json_encode(true);
-                    } else echo json_encode(false);
+                    if (isset($user['id'])) {
+                        echo json_encode(false);
+                    } else echo json_encode(true);
                 }
                 else {
                     $user = getUser('id', $parts[1], $conn);
@@ -653,9 +704,9 @@ if($method === 'PATCH'){
     if($parts[0] === 'users'){
         $data = json_decode(file_get_contents('php://input'), true);
         $user = checkUser($data['login'], $data['password'], $conn);
+        setUserLogined(1, $user['id'], $conn);
         header('Content-Type: application/json');
         echo json_encode($user);
-
     }
 }
 
@@ -695,8 +746,20 @@ if ($method === 'POST'){
             $remove = deleteSubscribe($userId, $parts[1], $conn);
             $res = ['status' => $remove, 'type' => 'unsubscribe'];
         } else {
-            $add = addSubscribe($userId, $parts[1], $conn);
-            $res = ['status' => $add, 'type' => 'subscribe'];
+            $userReciver = getUser('id', $parts[1], $conn);
+            if (intval($parts[1]) !== intval($userId)) {
+                $res = [];
+                if ($userReciver['isLogined']){
+                    $user = getUser('id', $userId, $conn);
+                    $title = $user['name'];
+                    $message = "Користувач ${user['name']} підписався на Вас";
+                    $res['notification'] = sendNotification($title, $message, $parts[1]);
+                }
+                $add = addSubscribe($userId, $parts[1], $conn);
+                $res['status'] =  $add;
+                $res['type'] = 'subscribe';
+            }
+
         }
         echo json_encode($res);
     }
@@ -705,15 +768,51 @@ if ($method === 'POST'){
         if(isset($parts[1])){
             if ($parts[1] === 'threads'){
                 if (isset($parts[2])){
+                    $thread = getThread($data['threadId'], $conn);
+                    $user = getUser('id', $data['authorId'], $conn);
+
+                    $res = '';
+                    if (intval($data['authorId']) !== intval($thread['author_id'])){
+                        $userReciver = getUser('id', $thread['author_id'], $conn);
+                        if ($userReciver['isLogined']){
+                            $title = $user['name'];
+                            $message = "Користувач ${user['name']} залишив коментар під вашим постом: ${data['comment']}";
+                            $res = sendNotification($title, $message, $thread['author_id']);
+                        }
+                    }
                     $commentId = insertCommentToThread($data['comment'], $data['authorId'], $data['threadId'], $conn);
                     $comment = getSingleComment($commentId, $conn);
+                    $comment['notification'] = $res;
                     echo json_encode($comment);
                 }
             }
             if ($parts[1] === 'reply'){
                 if(isset($parts[2])){
+                    $user = getUser('id', $data['authorId'], $conn);
+                    $originalComment = getSingleComment($data['reply'], $conn);
+                    $thread = getThread($data['threadId'], $conn);
+                    $res = ['replyToComment' => false, 'replyToThread' => false];
+                    if (intval($originalComment['author_id']) !== intval($data['authorId'])) {
+                        $userReciver = getUser('id', $originalComment['author_id'], $conn);
+                        if ($userReciver['isLogined']){
+                            $title = $user['name'];
+                            $message = "Користувач ${user['name']} відповів на ваш коментар: ${data['comment']}";
+                            $res['replyToComment'] = sendNotification($title, $message, $originalComment['author_id']);
+                        }
+                    }
+
+                    if (intval($thread['author_id']) !== intval($data['authorId'])) {
+                        $threadAuthor = getUser('id', $thread['author_id'], $conn);
+                        if ($threadAuthor['isLogined']){
+                            $title = $user['name'];
+                            $message = "Користувач ${user['name']} залишив коментар під вашим постом: ${data['comment']}";
+                            $res['replyToThread'] = sendNotification($title, $message, $thread['author_id']);
+                        }
+                    }
+
                     $commentId = insertCommentRelply($data['comment'], $data['authorId'], $data['threadId'], $data['reply'], $conn);
-                    $comment = getSingleComment($commentId, $conn);
+                    $comment['comment'] = getSingleComment($commentId, $conn);
+                    $comment['notification'] = $res;
                     echo json_encode($comment);
                 }
             }
@@ -765,6 +864,17 @@ if ($method === 'PUT'){
             if(!$liked){
                 $res['status'] = 'added';
                 $res['data'] = insertLike('likes', 'thread_id', $data['threadId'],$data['userId'], $conn);
+                $like = getLike($res['data'], $conn);
+                $thread = getThread($like['thread_id'], $conn);
+                $user = getUser('id', $data['userId'], $conn);
+                if (intval($thread['author_id']) !== intval($user['id'])) {
+                    $threadAuthor = getUser('id', $thread['author_id'], $conn);
+                    if ($threadAuthor['isLogined']){
+                        $message = "Користувачу " . $user['name'] . " сподобався ваш тред";
+                        $title = $user['name'];
+                        $res['notification'] = sendNotification($title, $message, $thread['author_id']);
+                    }
+                }
             }
             else{
                 $res['status'] = 'removed';
@@ -780,6 +890,16 @@ if ($method === 'PUT'){
             $liked = checkCommentLike($data['userId'], $data['commentId'], $conn);
             if(!$liked){
                 $res['status'] = 'added';
+                $user = getUser('id', $data['userId'], $conn);
+                $comment = getSingleComment($data['commentId'], $conn);
+                if (intval($comment['author_id']) !== intval($user['id'])) {
+                    $commentAuthor = getUser('id', $comment['author_id'], $conn);
+                    if ($commentAuthor['isLogined']){
+                        $title = $user['name'];
+                        $message = "Користувачу " . $user['name'] . " сподобався ваш коментар";
+                        $res['notification'] = sendNotification($title, $message, $comment['author_id']);
+                    }
+                }
                 $res['data'] = insertLike('comments_likes', 'comment_id', $data['commentId'],$data['userId'], $conn);
             }
             else{
@@ -789,6 +909,20 @@ if ($method === 'PUT'){
                 }
             }
             echo json_encode($res);
+        }
+    }
+}
+if ($method === 'DELETE'){
+    if(isset($parts[0])){
+        if ($parts[0] === 'logout'){
+            header('Content-Type: application/json');
+            if ($userId !== null){
+                setUserLogined(0, $userId, $conn);
+                echo json_encode(true);
+            }
+            else{
+                echo json_encode(false);
+            }
         }
     }
 }
